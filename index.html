@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart OMR System</title>
+    <style>
+        /* --- CSS STYLES --- */
+        :root { --primary: #2c3e50; --accent: #3498db; }
+        body { font-family: 'Segoe UI', sans-serif; margin: 0; background: #f4f7f6; }
+        
+        /* Layout */
+        .app-container { max-width: 800px; margin: 0 auto; padding: 20px; }
+        .hidden { display: none !important; }
+        
+        /* Tabs */
+        .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
+        .tab-btn { flex: 1; padding: 15px; border: none; background: #ddd; cursor: pointer; font-weight: bold; border-radius: 8px; }
+        .tab-btn.active { background: var(--primary); color: white; }
+
+        /* Form Styles */
+        .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        label { display: block; margin-top: 10px; font-weight: bold; color: #555; }
+        input, select { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box;}
+        
+        .grid-options { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+        /* The OMR Sheet Preview (Visual Only) */
+        .omr-preview { border: 2px solid #333; padding: 20px; position: relative; background: white; }
+        .omr-header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
+        
+        /* The Question Grid */
+        .q-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px; }
+        .q-row { display: flex; align-items: center; gap: 10px; }
+        .bubble { 
+            width: 25px; height: 25px; border-radius: 50%; border: 1px solid #333; 
+            display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 12px;
+        }
+        
+        /* Correct Answer Selection Styles */
+        .bubble.selected { background: var(--primary); color: white; border-color: var(--primary); }
+        
+        /* Anchor Markers (For the Scanner to find) */
+        .anchor { width: 20px; height: 20px; background: black; position: absolute; }
+        .tl { top: 10px; left: 10px; }
+        .tr { top: 10px; right: 10px; }
+        .bl { bottom: 10px; left: 10px; }
+        .br { bottom: 10px; right: 10px; }
+
+        /* Buttons */
+        .action-btn { background: var(--accent); color: white; border: none; padding: 15px; width: 100%; border-radius: 8px; font-size: 1.1em; cursor: pointer; margin-top: 20px; }
+        .print-btn { background: #27ae60; }
+
+        /* Print Specifics */
+        @media print {
+            body * { visibility: hidden; }
+            #sheet-area, #sheet-area * { visibility: visible; }
+            #sheet-area { position: absolute; left: 0; top: 0; width: 100%; margin: 0; border: none; }
+            .anchor { background: black !important; -webkit-print-color-adjust: exact; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="app-container">
+    <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab('setup')">1. Setup & Key</button>
+        <button class="tab-btn" onclick="switchTab('scan')">2. Scan Sheet</button>
+    </div>
+
+    <div id="setup-panel">
+        <div class="card">
+            <h3>📝 Exam Configuration</h3>
+            <label>School / Institution Name</label>
+            <input type="text" id="schoolName" placeholder="e.g. Saraswati Shishu Mandir">
+            
+            <div class="grid-options">
+                <div>
+                    <label>Exam Name</label>
+                    <input type="text" id="examName" placeholder="e.g. Annual GK Quiz">
+                </div>
+                <div>
+                    <label>Total Questions</label>
+                    <input type="number" id="qCount" value="10" min="5" max="50" onchange="renderSheet()">
+                </div>
+            </div>
+            <div class="grid-options">
+                <div>
+                    <label>Marks per Q</label>
+                    <input type="number" id="marksPerQ" value="1">
+                </div>
+                <div>
+                    <label>Section/Set</label>
+                    <input type="text" id="sectionName" value="A">
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>🔑 Set Answer Key</h3>
+            <p style="color:#666; font-size:0.9em;">Click the bubbles below to set the correct answer. This will be saved for the scanner.</p>
+            <div id="sheet-area" class="omr-preview">
+                <div class="anchor tl"></div>
+                <div class="anchor tr"></div>
+                <div class="anchor bl"></div>
+                <div class="anchor br"></div>
+
+                <div class="omr-header">
+                    <h2 id="dispSchool">SCHOOL NAME</h2>
+                    <h4 id="dispExam">EXAM NAME | SET A</h4>
+                    <div style="display:flex; justify-content:space-between; margin-top:10px; border:1px solid #ccc; padding:5px;">
+                        <span>Name: __________________</span>
+                        <span>Roll No: ______</span>
+                    </div>
+                </div>
+
+                <div id="questionsContainer" class="q-grid"></div>
+            </div>
+
+            <button class="action-btn print-btn" onclick="window.print()">🖨️ Print Student Sheets</button>
+            <button class="action-btn" onclick="saveKeyAndSwitch()">💾 Save Key & Go to Scanner</button>
+        </div>
+    </div>
+
+    <div id="scan-panel" class="hidden">
+        <div class="card">
+            <h3>📸 Scanner</h3>
+            <p>Ready to grade based on the key you just saved.</p>
+            <p><strong>Active Key:</strong> <span id="keyStatus" style="color:red">No Key Set</span></p>
+            
+            <div style="background:#eee; height:300px; display:flex; align-items:center; justify-content:center; border:2px dashed #999;">
+                [Camera / Scanner Interface will go here]
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    // --- LOGIC ---
+    
+    // 1. Initialize Sheet on Load
+    window.onload = function() {
+        renderSheet();
+    };
+
+    // 2. Dynamic Sheet Rendering
+    function renderSheet() {
+        // Update Header Text
+        document.getElementById('dispSchool').innerText = document.getElementById('schoolName').value || "SCHOOL NAME";
+        document.getElementById('dispExam').innerText = (document.getElementById('examName').value || "EXAM") + " | CLASS: " + document.getElementById('sectionName').value;
+
+        // Generate Bubbles
+        const count = parseInt(document.getElementById('qCount').value);
+        const container = document.getElementById('questionsContainer');
+        container.innerHTML = ''; // Clear previous
+
+        for (let i = 1; i <= count; i++) {
+            const row = document.createElement('div');
+            row.className = 'q-row';
+            
+            // Question Number
+            const qNum = document.createElement('span');
+            qNum.innerText = i + ".";
+            qNum.style.width = "20px";
+            row.appendChild(qNum);
+
+            // Options A, B, C, D
+            ['A', 'B', 'C', 'D'].forEach(opt => {
+                const bubble = document.createElement('div');
+                bubble.className = 'bubble';
+                bubble.innerText = opt;
+                bubble.dataset.q = i; // Store Question ID
+                bubble.dataset.val = opt; // Store Value
+                
+                // Allow clicking to set Answer Key
+                bubble.onclick = function() {
+                    toggleSelection(i, opt, bubble);
+                };
+                
+                row.appendChild(bubble);
+            });
+            container.appendChild(row);
+        }
+    }
+
+    // 3. Answer Key Selection Logic
+    // We store the key in a simple object: { "1": "A", "2": "C" }
+    let answerKey = {};
+
+    function toggleSelection(qNum, optVal, bubbleElem) {
+        // Remove 'selected' class from siblings in the same row
+        const parent = bubbleElem.parentNode;
+        const siblings = parent.querySelectorAll('.bubble');
+        siblings.forEach(b => b.classList.remove('selected'));
+
+        // Select clicked bubble
+        bubbleElem.classList.add('selected');
+        
+        // Save to memory
+        answerKey[qNum] = optVal;
+        console.log("Current Key:", answerKey);
+    }
+
+    // 4. Save Key & Switch Tabs
+    function saveKeyAndSwitch() {
+        const qCount = document.getElementById('qCount').value;
+        const marks = document.getElementById('marksPerQ').value;
+        
+        // Validation
+        if (Object.keys(answerKey).length < qCount) {
+            alert("⚠️ Warning: You haven't selected answers for all questions!");
+        }
+
+        // Save to LocalStorage (Browser Memory)
+        const examConfig = {
+            school: document.getElementById('schoolName').value,
+            totalQ: qCount,
+            marksPerQ: marks,
+            key: answerKey
+        };
+        
+        localStorage.setItem('omrConfig', JSON.stringify(examConfig));
+        
+        // Switch UI
+        switchTab('scan');
+        updateScannerStatus();
+    }
+
+    // 5. Tab Switching
+    function switchTab(tabName) {
+        document.getElementById('setup-panel').classList.add('hidden');
+        document.getElementById('scan-panel').classList.add('hidden');
+        
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        
+        if(tabName === 'setup') {
+            document.getElementById('setup-panel').classList.remove('hidden');
+            document.querySelectorAll('.tab-btn')[0].classList.add('active');
+        } else {
+            document.getElementById('scan-panel').classList.remove('hidden');
+            document.querySelectorAll('.tab-btn')[1].classList.add('active');
+            updateScannerStatus();
+        }
+    }
+
+    function updateScannerStatus() {
+        const data = localStorage.getItem('omrConfig');
+        const status = document.getElementById('keyStatus');
+        if (data) {
+            const config = JSON.parse(data);
+            status.innerHTML = `Loaded Key for <b>${config.school}</b> (${config.totalQ} Questions)`;
+            status.style.color = "green";
+        } else {
+            status.innerText = "No Key Found. Please go to Setup.";
+            status.style.color = "red";
+        }
+    }
+</script>
+
+</body>
+</html>
